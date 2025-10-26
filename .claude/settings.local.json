@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir)",
+      "Bash(pnpm install:*)",
+      "Bash(uv sync)",
+      "Bash(docker compose:*)",
+      "Bash(uv run python:*)",
+      "Bash(pnpm --filter @beanaries/web dev:*)",
+      "Bash(curl:*)",
+      "Bash(uv run alembic:*)",
+      "Bash(python -m json.tool:*)",
+      "Bash(timeout 60 uv run:*)",
+      "Bash(timeout 90 uv run:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(taskkill /F /PID 9812)",
+      "Bash(taskkill:*)",
+      "Bash(dir:*)",
+      "Bash(timeout 5 bash:*)",
+      "Bash(tasklist:*)",
+      "Bash(timeout 2 bash:*)",
+      "Bash(cmd /c \"taskkill /PID 12436 /F\")",
+      "Bash(powershell -Command:*)",
+      "Bash(where make:*)",
+      "Bash(psql:*)",
+      "Bash(go version:*)",
+      "Bash(python:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
