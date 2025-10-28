@@ -41,7 +41,16 @@
       "Bash(cmd /c \"taskkill /F /PID 30456 && taskkill /F /PID 59476\")",
       "Bash(for pid in 30456 59476 64372)",
       "Bash(do taskkill //F //T //PID $pid)",
-      "Bash(done)"
+      "Bash(done)",
+      "Bash(timeout 30 bash:*)",
+      "Bash(timeout 40 bash:*)",
+      "Bash(timeout 30 uv run:*)",
+      "Bash(del test_luci_api.py backfill_chromium_commit_messages.py)",
+      "Bash(cmd /c \"del test_luci_api.py backfill_chromium_commit_messages.py 2>nul\")",
+      "Bash(git clone:*)",
+      "Read(//c/Users/zachf/src/**)",
+      "Bash(cat:*)",
+      "Bash(PGPASSWORD=postgres psql:*)"
     ],
     "deny": [],
     "ask": []

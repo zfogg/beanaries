@@ -26,8 +26,8 @@ class ChromiumLUCIScraper:
         self,
         bucket: str,
         builder: str,
-        limit: int = 100,
-        page_size: int = 100,
+        limit: int | None = None,
+        page_size: int = 1000,
     ) -> list[dict[str, Any]]:
         """
         Search for builds using Buildbucket SearchBuilds RPC with pagination support.
@@ -35,7 +35,7 @@ class ChromiumLUCIScraper:
         Args:
             bucket: LUCI bucket name (e.g., "ci", "try")
             builder: Builder name (e.g., "Linux Builder")
-            limit: Maximum number of builds to fetch (total across all pages)
+            limit: Maximum number of builds to fetch (None = unlimited)
             page_size: Number of builds per page (max 1000 per API docs)
 
         Returns:
@@ -49,10 +49,13 @@ class ChromiumLUCIScraper:
         page_token = None
 
         async with httpx.AsyncClient() as client:
-            while len(all_builds) < limit:
+            while limit is None or len(all_builds) < limit:
                 # Calculate how many builds to fetch in this page
-                remaining = limit - len(all_builds)
-                current_page_size = min(page_size, remaining, 1000)  # API max is 1000
+                if limit is None:
+                    current_page_size = min(page_size, 1000)  # API max is 1000
+                else:
+                    remaining = limit - len(all_builds)
+                    current_page_size = min(page_size, remaining, 1000)  # API max is 1000
 
                 # Build the request payload for SearchBuilds
                 request_data = {
@@ -88,6 +91,10 @@ class ChromiumLUCIScraper:
                 data = json.loads(text) if text else {}
                 builds = data.get("builds", [])
                 all_builds.extend(builds)
+
+                # Log progress
+                if len(all_builds) % 1000 == 0 or len(builds) < current_page_size:
+                    print(f"  Progress: {len(all_builds)} builds fetched...")
 
                 # Check if there are more pages
                 page_token = data.get("nextPageToken")
@@ -138,8 +145,7 @@ class ChromiumLUCIScraper:
         gitiles_commit = input_data.get("gitilesCommit", {})
 
         commit_sha = gitiles_commit.get("id")  # Git commit hash
-        # Commit message not always available in SearchBuilds, may need GetBuild
-        commit_message = None
+        commit_message = gitiles_commit.get("message")  # Commit message (first line)
 
         return commit_sha, commit_message
 
@@ -148,7 +154,7 @@ class ChromiumLUCIScraper:
         config: ProjectConfig,
         project: Project,
         db: AsyncSession,
-        max_builds: int = 5000,
+        max_builds: int | None = None,
     ) -> int:
         """
         Scrape builds for a specific Chromium LUCI configuration.
@@ -157,7 +163,7 @@ class ChromiumLUCIScraper:
             config: ProjectConfig with scraper_config containing bucket and builder
             project: Project model instance
             db: Database session
-            max_builds: Maximum number of builds to fetch (default 5000)
+            max_builds: Maximum number of builds to fetch (None = unlimited)
 
         Returns:
             Number of builds added to database
@@ -171,11 +177,13 @@ class ChromiumLUCIScraper:
             raise ValueError(f"Builder not specified in scraper_config for project {project.full_name}")
 
         # Fetch builds from Buildbucket
+        print(f"Fetching builds from LUCI (limit: {'unlimited' if max_builds is None else max_builds})...")
         builds = await self.search_builds(
             bucket=bucket,
             builder=builder,
             limit=max_builds,
         )
+        print(f"Fetched {len(builds)} builds from API")
 
         builds_to_add = []
 
