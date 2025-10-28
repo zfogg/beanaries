@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import BigInteger, Boolean, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import JSON, BigInteger, Boolean, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base, TimestampMixin
@@ -47,6 +47,7 @@ class DataSource(str, Enum):
     """How build data was collected."""
 
     GITHUB_ACTIONS = "github_actions"
+    CHROMIUM_LUCI = "chromium_luci"
     LOCAL_BUILD = "local_build"
     MANUAL = "manual"
 
@@ -134,6 +135,11 @@ class ProjectConfig(Base, TimestampMixin):
     platform: Mapped[Platform] = mapped_column(String(50), nullable=False)
     branch: Mapped[str] = mapped_column(String(255), default="main", nullable=False)
 
+    # Custom scraper configuration (flexible JSON for scraper-specific settings)
+    # For chromium_luci: {"bucket": "ci", "builder": "Linux Builder", "buildbucket_host": "cr-buildbucket.appspot.com"}
+    # For github_actions: can migrate workflow_file, job_name here eventually
+    scraper_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
     # Scheduling
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     check_interval_hours: Mapped[int] = mapped_column(Integer, default=24, nullable=False)
@@ -175,6 +181,11 @@ class Build(Base, TimestampMixin):
     workflow_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     workflow_run_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     job_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+    # Custom scraper metadata (flexible JSON for scraper-specific build data)
+    # For chromium_luci: {"build_id": 12345, "builder": "Linux Builder", "bucket": "ci"}
+    # For github_actions: can store additional workflow/job metadata here
+    scraper_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # External links
     build_url: Mapped[str | None] = mapped_column(String(511), nullable=True)

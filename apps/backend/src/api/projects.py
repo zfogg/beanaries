@@ -227,10 +227,10 @@ async def get_project(
     stats_result = await db.execute(stats_query)
     stats_row = stats_result.one()
 
-    # Get latest builds
+    # Get latest builds (only completed builds with finished_at)
     latest_builds_query = (
         select(Build)
-        .where(Build.project_id == project_id)
+        .where(Build.project_id == project_id, Build.finished_at.isnot(None))
         .order_by(Build.finished_at.desc())
         .limit(10)
     )
@@ -251,7 +251,19 @@ async def get_project(
     )
 
     return {
-        **project.__dict__,
+        "id": project.id,
+        "owner": project.owner,
+        "name": project.name,
+        "full_name": project.full_name,
+        "url": project.url,
+        "subproject_path": project.subproject_path,
+        "description": project.description,
+        "stars": project.stars,
+        "language": project.language,
+        "category": project.category,
+        "is_active": project.is_active,
+        "created_at": project.created_at,
+        "updated_at": project.updated_at,
         "stats": stats,
         "latest_builds": latest_builds,
     }

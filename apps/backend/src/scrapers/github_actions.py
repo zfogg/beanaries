@@ -104,17 +104,19 @@ class GitHubActionsScraper:
 
     def _filter_build_jobs(self, jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Filter out non-build jobs (linting, formatting, validation, etc)."""
-        # Exclusion patterns for job names
+        # Exclusion patterns for job names - be conservative to avoid excluding real builds
         exclude_patterns = [
-            "lint", "format", "check", "validate", "verify",
-            "spell", "style", "prettier", "eslint", "flake8",
-            "mypy", "type-check", "clippy", "rustfmt",
-            "doc", "docs", "documentation",
-            "typo", "dead-code", "unused",
-            # Setup/orchestration jobs
-            "filter", "determina", "retriev", "setup", "prepare",
-            "before-test", "after-test", "pre-build", "post-build",
-            "runner-", "label-", "target-",
+            "lint", "linting",
+            "format", "formatting", "prettier",
+            "eslint", "flake8", "mypy",
+            "type-check", "type check",
+            "clippy", "rustfmt",
+            "spell", "spellcheck",
+            "style check", "code style",
+            "dead-code", "unused",
+            # Only filter very specific doc/setup jobs
+            "documentation only", "docs only", "generate docs",
+            "code formatting",
         ]
 
         filtered_jobs = []
@@ -131,9 +133,10 @@ class GitHubActionsScraper:
                 job.get("completed_at"),
             )
 
-            # Skip SUCCESSFUL jobs that completed in less than 30 seconds (likely not builds)
+            # Skip SUCCESSFUL jobs that completed in less than 15 seconds (likely not builds)
+            # Reduced from 30s to catch more real builds
             # Keep failed builds regardless of duration as they indicate broken builds
-            if duration is not None and duration < 30 and job.get("conclusion") == "success":
+            if duration is not None and duration < 15 and job.get("conclusion") == "success":
                 continue
 
             # Skip jobs that haven't started or completed

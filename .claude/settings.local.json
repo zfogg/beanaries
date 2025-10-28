@@ -26,7 +26,22 @@
       "Bash(where make:*)",
       "Bash(psql:*)",
       "Bash(go version:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(pg_dump:*)",
+      "Bash(set:*)",
+      "Bash(timeout 10 bash:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(tee:*)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(timeout 120 uv run:*)",
+      "WebFetch(domain:www.chromium.org)",
+      "WebSearch",
+      "WebFetch(domain:chromium.googlesource.com)",
+      "Bash(timeout 10 uv run:*)",
+      "Bash(cmd /c \"taskkill /F /PID 30456 && taskkill /F /PID 59476\")",
+      "Bash(for pid in 30456 59476 64372)",
+      "Bash(do taskkill //F //T //PID $pid)",
+      "Bash(done)"
     ],
     "deny": [],
     "ask": []
