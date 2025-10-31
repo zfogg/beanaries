@@ -8,7 +8,9 @@ export enum ProjectCategory {
   WEB_FRAMEWORK = 'web_framework',
   BUILD_TOOL = 'build_tool',
   GRAPHICS = 'graphics',
-  SYSTEM_TOOL = 'system_tool',
+  MEDIA = 'media',
+  DEVTOOLS = 'devtools',
+  INFRASTRUCTURE = 'infrastructure',
   OTHER = 'other',
 }
 
@@ -25,6 +27,9 @@ export enum Platform {
 
 export enum DataSource {
   GITHUB_ACTIONS = 'github_actions',
+  BUILDKITE = 'buildkite',
+  LUCI = 'luci',
+  GITLAB_CI = 'gitlab_ci',
   LOCAL_BUILD = 'local_build',
   MANUAL = 'manual',
 }

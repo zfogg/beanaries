@@ -27,6 +27,8 @@ class ProjectCategory(str, Enum):
     NETWORKING = "networking"
     VIRTUALIZATION = "virtualization"
     OS = "os"
+    BUILD_TOOL = "build_tool"
+    GRAPHICS = "graphics"
     OTHER = "other"
 
 
@@ -47,9 +49,16 @@ class DataSource(str, Enum):
     """How build data was collected."""
 
     GITHUB_ACTIONS = "github_actions"
-    CHROMIUM_LUCI = "chromium_luci"
+    LUCI = "luci"  # Generic LUCI/Buildbucket (Chromium, Fuchsia, Dart, Flutter, WebRTC, V8, etc.)
+    BUILDKITE = "buildkite"  # Buildkite CI (Bazel, Elasticsearch, Terraform, etc.)
+    KOJI = "koji"  # Fedora Koji build system (RPM packages, Fedora ecosystem)
+    OBS = "obs"  # OpenSUSE Build Service (RPM/DEB packages, openSUSE ecosystem)
+    GITLAB_CI = "gitlab_ci"  # GitLab CI/CD (Mesa 3D, etc.)
     LOCAL_BUILD = "local_build"
     MANUAL = "manual"
+
+    # Backward compatibility alias
+    CHROMIUM_LUCI = LUCI
 
 
 class Project(Base, TimestampMixin):
@@ -108,7 +117,11 @@ class Project(Base, TimestampMixin):
 
 
 class ProjectConfig(Base, TimestampMixin):
-    """Configuration for how to collect build data for a project."""
+    """Base configuration for how to collect build data for a project.
+
+    This is the parent table that links projects to their specific scraper configs.
+    Each config record points to a specific scraper configuration table.
+    """
 
     __tablename__ = "project_configs"
 
@@ -118,27 +131,9 @@ class ProjectConfig(Base, TimestampMixin):
     # Data source configuration
     data_source: Mapped[DataSource] = mapped_column(String(50), nullable=False)
 
-    # GitHub Actions specific
-    workflow_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    workflow_file: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    job_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-
-    # Local build specific
-    build_command: Mapped[str | None] = mapped_column(Text, nullable=True)
-    build_dir: Mapped[str | None] = mapped_column(String(511), nullable=True)
-
-    # Direct source download (alternative to git)
-    source_url: Mapped[str | None] = mapped_column(String(1023), nullable=True)
-    extract_command: Mapped[str | None] = mapped_column(String(255), nullable=True)
-
-    # Common
-    platform: Mapped[Platform] = mapped_column(String(50), nullable=False)
+    # Common scraping configuration
+    platform: Mapped[Platform | None] = mapped_column(String(50), nullable=True)  # For filtering specific platforms
     branch: Mapped[str] = mapped_column(String(255), default="main", nullable=False)
-
-    # Custom scraper configuration (flexible JSON for scraper-specific settings)
-    # For chromium_luci: {"bucket": "ci", "builder": "Linux Builder", "buildbucket_host": "cr-buildbucket.appspot.com"}
-    # For github_actions: can migrate workflow_file, job_name here eventually
-    scraper_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # Scheduling
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -147,12 +142,152 @@ class ProjectConfig(Base, TimestampMixin):
 
     # Relationships
     project: Mapped["Project"] = relationship(back_populates="configs")
+    github_actions_config: Mapped["GitHubActionsConfig | None"] = relationship(
+        back_populates="config",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    luci_config: Mapped["LUCIConfig | None"] = relationship(
+        back_populates="config",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    buildkite_config: Mapped["BuildkiteConfig | None"] = relationship(
+        back_populates="config",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    koji_config: Mapped["KojiConfig | None"] = relationship(
+        back_populates="config",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    obs_config: Mapped["ObsConfig | None"] = relationship(
+        back_populates="config",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
     __table_args__ = (
         Index("idx_configs_project", "project_id"),
         Index("idx_configs_enabled", "is_enabled"),
+        Index("idx_configs_data_source", "data_source"),
         Index("idx_configs_next_check", "last_checked_at", "check_interval_hours"),
     )
+
+
+class GitHubActionsConfig(Base, TimestampMixin):
+    """GitHub Actions specific configuration."""
+
+    __tablename__ = "github_actions_configs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    config_id: Mapped[int] = mapped_column(
+        ForeignKey("project_configs.id"),
+        nullable=False,
+        unique=True,
+    )
+
+    # GitHub Actions workflow configuration
+    workflow_file: Mapped[str] = mapped_column(String(255), nullable=False)
+    workflow_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    job_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Relationship
+    config: Mapped["ProjectConfig"] = relationship(back_populates="github_actions_config")
+
+    __table_args__ = (Index("idx_gh_actions_config", "config_id"),)
+
+
+class LUCIConfig(Base, TimestampMixin):
+    """LUCI/Buildbucket specific configuration."""
+
+    __tablename__ = "luci_configs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    config_id: Mapped[int] = mapped_column(
+        ForeignKey("project_configs.id"),
+        nullable=False,
+        unique=True,
+    )
+
+    # LUCI configuration
+    project_name: Mapped[str] = mapped_column(String(255), nullable=False)  # e.g., "chromium", "fuchsia"
+    bucket: Mapped[str] = mapped_column(String(255), nullable=False)  # e.g., "ci", "try"
+    builder: Mapped[str] = mapped_column(String(255), nullable=False)  # e.g., "Linux Builder"
+
+    # Relationship
+    config: Mapped["ProjectConfig"] = relationship(back_populates="luci_config")
+
+    __table_args__ = (Index("idx_luci_config", "config_id"),)
+
+
+class BuildkiteConfig(Base, TimestampMixin):
+    """Buildkite specific configuration."""
+
+    __tablename__ = "buildkite_configs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    config_id: Mapped[int] = mapped_column(
+        ForeignKey("project_configs.id"),
+        nullable=False,
+        unique=True,
+    )
+
+    # Buildkite configuration
+    org_slug: Mapped[str] = mapped_column(String(255), nullable=False)  # e.g., "llvm-project"
+    pipeline_slug: Mapped[str] = mapped_column(String(255), nullable=False)  # e.g., "libcxx-ci"
+
+    # Relationship
+    config: Mapped["ProjectConfig"] = relationship(back_populates="buildkite_config")
+
+    __table_args__ = (Index("idx_buildkite_config", "config_id"),)
+
+
+class KojiConfig(Base, TimestampMixin):
+    """Fedora Koji build system specific configuration."""
+
+    __tablename__ = "koji_configs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    config_id: Mapped[int] = mapped_column(
+        ForeignKey("project_configs.id"),
+        nullable=False,
+        unique=True,
+    )
+
+    # Koji configuration
+    package_name: Mapped[str] = mapped_column(String(255), nullable=False)  # e.g., "kernel", "systemd", "gcc"
+    tag: Mapped[str | None] = mapped_column(String(255), nullable=True)  # e.g., "f41-build", "f40-updates"
+
+    # Relationship
+    config: Mapped["ProjectConfig"] = relationship(back_populates="koji_config")
+
+    __table_args__ = (Index("idx_koji_config", "config_id"),)
+
+
+class ObsConfig(Base, TimestampMixin):
+    """OpenSUSE Build Service specific configuration."""
+
+    __tablename__ = "obs_configs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    config_id: Mapped[int] = mapped_column(
+        ForeignKey("project_configs.id"),
+        nullable=False,
+        unique=True,
+    )
+
+    # OBS configuration
+    project_name: Mapped[str] = mapped_column(String(255), nullable=False)  # e.g., "openSUSE:Factory", "KDE:Frameworks"
+    package_name: Mapped[str] = mapped_column(String(255), nullable=False)  # e.g., "kernel-default", "systemd", "gcc"
+    repository: Mapped[str | None] = mapped_column(String(255), nullable=True)  # e.g., "standard", "snapshot"
+    arch: Mapped[str | None] = mapped_column(String(255), nullable=True)  # e.g., "x86_64", "aarch64"
+
+    # Relationship
+    config: Mapped["ProjectConfig"] = relationship(back_populates="obs_config")
+
+    __table_args__ = (Index("idx_obs_config", "config_id"),)
 
 
 class Build(Base, TimestampMixin):

@@ -215,14 +215,18 @@ async def get_project(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Get statistics
+    # Get statistics (exclude outliers >24 hours)
     stats_query = select(
         func.count(Build.id).label("total_builds"),
         func.sum(cast(case((Build.success == True, 1), else_=0), Integer())).label("successful_builds"),
         func.avg(Build.duration_seconds).label("avg_duration"),
         func.min(Build.duration_seconds).label("min_duration"),
         func.max(Build.duration_seconds).label("max_duration"),
-    ).where(Build.project_id == project_id, Build.duration_seconds.isnot(None))
+    ).where(
+        Build.project_id == project_id,
+        Build.duration_seconds.isnot(None),
+        Build.duration_seconds <= 86400,  # Exclude outliers >24 hours
+    )
 
     stats_result = await db.execute(stats_query)
     stats_row = stats_result.one()
@@ -323,10 +327,14 @@ async def get_project_timeseries(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Build query
+    # Build query (exclude outliers >24 hours)
     query = (
         select(Build)
-        .where(Build.project_id == project_id)
+        .where(
+            Build.project_id == project_id,
+            Build.duration_seconds.isnot(None),
+            Build.duration_seconds <= 86400,  # Exclude outliers >24 hours
+        )
         .order_by(Build.finished_at.desc())
     )
 

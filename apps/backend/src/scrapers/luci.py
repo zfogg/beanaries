@@ -1,7 +1,9 @@
-"""Scraper for Chromium LUCI (Buildbucket) builds."""
+"""Scraper for LUCI (Buildbucket) builds."""
 import asyncio
 import json
+import subprocess
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -11,10 +13,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models import Build, DataSource, Platform, Project, ProjectConfig
 
 
-class ChromiumLUCIScraper:
-    """Scraper for Chromium LUCI Buildbucket builds."""
+class LUCIScraper:
+    """Scraper for LUCI Buildbucket builds (Chromium, Fuchsia, Dart, Flutter, WebRTC, V8, etc.)."""
 
-    def __init__(self):
+    def __init__(self, project_name: str):
+        """Initialize LUCI scraper.
+
+        Args:
+            project_name: The LUCI project name (e.g., "chromium", "fuchsia", "dart", "flutter", "webrtc", "v8")
+        """
+        self.project_name = project_name
         self.base_url = "https://cr-buildbucket.appspot.com"
         self.prpc_headers = {
             "Accept": "application/json",
@@ -61,7 +69,7 @@ class ChromiumLUCIScraper:
                 request_data = {
                     "predicate": {
                         "builder": {
-                            "project": "chromium",  # Chromium project
+                            "project": self.project_name,  # LUCI project name
                             "bucket": bucket,
                             "builder": builder,
                         }
@@ -149,32 +157,99 @@ class ChromiumLUCIScraper:
 
         return commit_sha, commit_message
 
+    def validate_commits_in_repo(
+        self, repo_path: Path, commit_shas: list[str]
+    ) -> set[str]:
+        """Validate which commits exist in the local repository.
+
+        Args:
+            repo_path: Path to git repository
+            commit_shas: List of commit SHAs to validate
+
+        Returns:
+            Set of commit SHAs that exist in the repository
+        """
+        if not commit_shas or not repo_path or not repo_path.exists():
+            return set()
+
+        valid_commits = set()
+
+        try:
+            # Use git cat-file --batch-check to verify commits exist
+            # This is much faster than checking each commit individually
+            input_data = "\n".join(commit_shas) + "\n"
+
+            result = subprocess.run(
+                ["git", "cat-file", "--batch-check"],
+                cwd=repo_path,
+                input=input_data,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=60,
+            )
+
+            # Output format: <sha> <type> <size> OR <sha> missing
+            for line in result.stdout.strip().split("\n"):
+                if line and " missing" not in line:
+                    # Extract SHA from first column
+                    sha = line.split()[0]
+                    if sha in commit_shas:
+                        valid_commits.add(sha)
+
+        except Exception as e:
+            print(f"Warning: Error validating commits in repository: {e}")
+            # Return empty set on error - fail safe by not adding builds
+
+        return valid_commits
+
     async def scrape_config(
         self,
         config: ProjectConfig,
         project: Project,
         db: AsyncSession,
         max_builds: int | None = None,
+        only_new: bool = True,
     ) -> int:
         """
-        Scrape builds for a specific Chromium LUCI configuration.
+        Scrape builds for a specific LUCI configuration.
 
         Args:
-            config: ProjectConfig with scraper_config containing bucket and builder
+            config: ProjectConfig with scraper_config containing project_name, bucket, and builder
             project: Project model instance
             db: Database session
             max_builds: Maximum number of builds to fetch (None = unlimited)
+            only_new: If True, stop when reaching existing data (default True)
 
         Returns:
             Number of builds added to database
         """
-        # Extract config from JSON field
-        scraper_config = config.scraper_config or {}
-        bucket = scraper_config.get("bucket", "ci")
-        builder = scraper_config.get("builder")
+        # Access LUCI specific config through relationship
+        luci_config = config.luci_config
+        if not luci_config:
+            raise ValueError(f"No LUCI config found for config {config.id}")
 
-        if not builder:
-            raise ValueError(f"Builder not specified in scraper_config for project {project.full_name}")
+        bucket = luci_config.bucket
+        builder = luci_config.builder
+        luci_project = luci_config.project_name
+
+        # Get most recent build_id if only_new mode
+        most_recent_build_id = None
+        if only_new:
+            result = await db.execute(
+                select(Build.scraper_metadata["build_id"].as_string())
+                .where(
+                    Build.project_id == project.id,
+                    Build.data_source == DataSource.LUCI,
+                )
+                .order_by(Build.started_at.desc())
+                .limit(1)
+            )
+            most_recent = result.scalar_one_or_none()
+            if most_recent:
+                most_recent_build_id = most_recent
+                print(f"  Most recent build_id in DB: {most_recent_build_id}, will stop when reached")
 
         # Fetch builds from Buildbucket
         print(f"Fetching builds from LUCI (limit: {'unlimited' if max_builds is None else max_builds})...")
@@ -185,12 +260,49 @@ class ChromiumLUCIScraper:
         )
         print(f"Fetched {len(builds)} builds from API")
 
+        # Note: repo_path validation has been removed. If needed in the future,
+        # add a repo_path field to the LUCIConfig model.
+        repo_path = None
+        if repo_path:
+            repo_path = Path(repo_path)
+            if not repo_path.is_absolute():
+                # Make relative paths absolute (relative to project root)
+                repo_path = Path(__file__).parent.parent.parent / repo_path
+
+        # Extract commit SHAs for validation
+        builds_by_commit = {}  # commit_sha -> build_data
+        for build_data in builds:
+            commit_sha, _ = self.extract_commit_info(build_data)
+            if commit_sha:
+                builds_by_commit[commit_sha] = build_data
+
+        # Validate commits if repo_path is configured
+        valid_commits = set(builds_by_commit.keys())  # Default: all commits are valid
+        if repo_path and repo_path.exists():
+            print(f"Validating {len(builds_by_commit)} commits against repository...")
+            valid_commits = self.validate_commits_in_repo(
+                repo_path, list(builds_by_commit.keys())
+            )
+            invalid_count = len(builds_by_commit) - len(valid_commits)
+            if invalid_count > 0:
+                print(
+                    f"⚠️  Filtered out {invalid_count} builds with commits not in tracked repository"
+                )
+        elif repo_path:
+            print(f"⚠️  Warning: Repository path configured but not found: {repo_path}")
+
         builds_to_add = []
 
         for build_data in builds:
             build_id = build_data.get("id")
             if not build_id:
                 continue
+
+            # Early exit if we've reached existing data (only_new mode)
+            # Note: LUCI build IDs can be very large (int64), so we compare as strings
+            if only_new and most_recent_build_id and str(build_id) == most_recent_build_id:
+                print(f"  Reached existing data (build_id: {build_id}), stopping")
+                break
 
             # Check if we already have this build
             # Note: Chromium build IDs can be very large (int64), so we compare as strings
@@ -200,7 +312,7 @@ class ChromiumLUCIScraper:
                     Build.scraper_metadata["build_id"].as_string() == str(build_id),
                 )
             )
-            if existing.scalar_one_or_none():
+            if existing.first():
                 continue  # Skip if already exists
 
             # Extract build information
@@ -219,6 +331,10 @@ class ChromiumLUCIScraper:
             if not commit_sha:
                 continue  # Skip builds without commit info
 
+            # Skip builds with commits not in the tracked repository
+            if commit_sha not in valid_commits:
+                continue
+
             # Calculate duration
             duration = self.calculate_duration_from_times(start_time, end_time)
 
@@ -233,12 +349,12 @@ class ChromiumLUCIScraper:
                 project_id=project.id,
                 commit_sha=commit_sha,
                 commit_message=commit_message,
-                branch=config.branch,  # Chromium uses 'main' or 'master'
+                branch=config.branch,
                 success=self.is_build_successful(status),
                 duration_seconds=duration,
                 platform=platform,
                 runner=builder_name,
-                data_source=DataSource.CHROMIUM_LUCI,
+                data_source=DataSource.LUCI,
                 workflow_name=None,  # Not applicable for LUCI
                 workflow_run_id=None,  # Not applicable for LUCI
                 job_id=None,  # Not applicable for LUCI
@@ -247,6 +363,7 @@ class ChromiumLUCIScraper:
                     "builder": builder_name,
                     "bucket": bucket,
                     "status": status,
+                    "luci_project": luci_project,  # Store the LUCI project name
                 },
                 build_url=build_url,
                 started_at=(
@@ -276,14 +393,14 @@ class ChromiumLUCIScraper:
         return builds_created
 
     async def scrape_all_configs(self, db: AsyncSession) -> dict[str, int]:
-        """Scrape all enabled Chromium LUCI configurations."""
-        # Get all enabled configs for Chromium LUCI
+        """Scrape all enabled LUCI configurations."""
+        # Get all enabled configs for LUCI projects
         result = await db.execute(
             select(ProjectConfig, Project)
             .join(Project)
             .where(
                 ProjectConfig.is_enabled == True,
-                ProjectConfig.data_source == DataSource.CHROMIUM_LUCI,
+                ProjectConfig.data_source == DataSource.LUCI,
                 Project.is_active == True,
             )
         )

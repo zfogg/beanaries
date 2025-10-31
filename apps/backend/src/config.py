@@ -25,6 +25,16 @@ class Settings(BaseSettings):
     # GitHub
     github_token: str | None = None
 
+    # Buildkite
+    buildkite_api_token: str | None = None
+
+    # OpenSUSE Build Service
+    opensuse_build_token: str | None = None
+    opensuse_build_username: str | None = None
+
+    # Firecrawl
+    firecrawl_api_key: str | None = None
+
     # App
     debug: bool = True
 

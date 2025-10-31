@@ -15,7 +15,10 @@ export function formatDuration(seconds: number | null | undefined): string {
   return parts.join(' ')
 }
 
-export function formatNumber(num: number): string {
+export function formatNumber(num: number | null | undefined): string {
+  if (num === null || num === undefined || num === 0) {
+    return 'N/A'
+  }
   if (num >= 1000000) {
     return (num / 1000000).toFixed(1) + 'M'
   }

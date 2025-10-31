@@ -19,7 +19,7 @@ async def get_leaderboard(
 ) -> list[dict]:
     """Get the leaderboard of projects by build time."""
 
-    # Subquery for build statistics
+    # Subquery for build statistics (exclude outliers >24 hours)
     build_stats = (
         select(
             Build.project_id,
@@ -27,7 +27,10 @@ async def get_leaderboard(
             func.count(Build.id).label("total_builds"),
             func.sum(cast(case((Build.success == True, 1), else_=0), Integer())).label("successful_builds"),
         )
-        .where(Build.duration_seconds.isnot(None))
+        .where(
+            Build.duration_seconds.isnot(None),
+            Build.duration_seconds <= 86400,  # Exclude outliers >24 hours
+        )
         .group_by(Build.project_id)
         .having(func.count(Build.id) >= min_builds)
     )
@@ -61,12 +64,13 @@ async def get_leaderboard(
     for row in rows:
         project, avg_time, total, successful = row
 
-        # Get latest build for this project
+        # Get latest build for this project (exclude outliers)
         latest_query = (
             select(Build.duration_seconds)
             .where(
                 Build.project_id == project.id,
                 Build.duration_seconds.isnot(None),
+                Build.duration_seconds <= 86400,  # Exclude outliers >24 hours
             )
             .order_by(Build.finished_at.desc())
             .limit(1)

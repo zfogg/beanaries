@@ -50,7 +50,18 @@
       "Bash(git clone:*)",
       "Read(//c/Users/zachf/src/**)",
       "Bash(cat:*)",
-      "Bash(PGPASSWORD=postgres psql:*)"
+      "Bash(PGPASSWORD=postgres psql:*)",
+      "WebFetch(domain:ci.android.com)",
+      "WebFetch(domain:ci.chromium.org)",
+      "Bash(timeout 600 uv run:*)",
+      "Bash(git mv:*)",
+      "WebFetch(domain:buildkite.com)",
+      "Bash(uv pip list:*)",
+      "Bash(uv add:*)",
+      "WebFetch(domain:docs.firecrawl.dev)",
+      "Bash(git log:*)",
+      "Bash(git fetch:*)",
+      "WebFetch(domain:gnu.googlesource.com)"
     ],
     "deny": [],
     "ask": []

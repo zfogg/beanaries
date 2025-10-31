@@ -65,30 +65,39 @@ class GitHubActionsScraper:
             data = response.json()
             return data.get("jobs", [])
 
-    def parse_platform(self, runner_name: str | None) -> Platform:
-        """Parse platform from runner name."""
-        if not runner_name:
+    def parse_platform_from_labels(self, labels: list[str]) -> Platform:
+        """Parse platform from runner labels array."""
+        if not labels:
             return Platform.UBUNTU_LATEST
-        runner_lower = runner_name.lower()
 
-        if "ubuntu" in runner_lower:
-            if "22.04" in runner_lower:
-                return Platform.UBUNTU_22_04
-            elif "24.04" in runner_lower:
-                return Platform.UBUNTU_24_04
-            return Platform.UBUNTU_LATEST
-        elif "macos" in runner_lower:
-            if "13" in runner_lower:
-                return Platform.MACOS_13
-            elif "14" in runner_lower:
-                return Platform.MACOS_14
-            return Platform.MACOS_LATEST
-        elif "windows" in runner_lower:
-            if "2022" in runner_lower:
+        # Convert all labels to lowercase for case-insensitive matching
+        labels_lower = [label.lower() for label in labels]
+        labels_str = " ".join(labels_lower)
+
+        # Check for Windows
+        if any("windows" in label for label in labels_lower):
+            if "windows-2022" in labels_lower or "2022" in labels_str:
                 return Platform.WINDOWS_2022
             return Platform.WINDOWS_LATEST
 
-        return Platform.UBUNTU_LATEST  # Default fallback
+        # Check for macOS
+        if any("macos" in label or "mac" in label for label in labels_lower):
+            if "macos-13" in labels_lower or "macos-13.0" in labels_lower:
+                return Platform.MACOS_13
+            elif "macos-14" in labels_lower or "macos-14.0" in labels_lower:
+                return Platform.MACOS_14
+            return Platform.MACOS_LATEST
+
+        # Check for Ubuntu
+        if any("ubuntu" in label for label in labels_lower):
+            if "ubuntu-22.04" in labels_lower or "22.04" in labels_str:
+                return Platform.UBUNTU_22_04
+            elif "ubuntu-24.04" in labels_lower or "24.04" in labels_str:
+                return Platform.UBUNTU_24_04
+            return Platform.UBUNTU_LATEST
+
+        # Default to Ubuntu if no specific platform found
+        return Platform.UBUNTU_LATEST
 
     def calculate_duration(self, started_at: str | None, completed_at: str | None) -> int | None:
         """Calculate duration in seconds from timestamps."""
@@ -153,12 +162,44 @@ class GitHubActionsScraper:
         project: Project,
         db: AsyncSession,
         max_runs: int = 100,
+        only_new: bool = True,
     ) -> int:
-        """Scrape builds for a specific project configuration."""
+        """Scrape builds for a specific project configuration.
+
+        Args:
+            config: ProjectConfig to scrape
+            project: Project model instance
+            db: Database session
+            max_runs: Maximum runs to fetch from API
+            only_new: If True, stop when reaching existing data (default True)
+        """
         owner = project.owner
         repo = project.name
-        workflow_file = config.workflow_file
-        job_name = config.job_name
+
+        # Access GitHub Actions specific config through relationship
+        gh_config = config.github_actions_config
+        if not gh_config:
+            raise ValueError(f"No GitHub Actions config found for config {config.id}")
+
+        workflow_file = gh_config.workflow_file
+        job_name = gh_config.job_name
+
+        # Get most recent workflow_run_id if only_new mode
+        most_recent_run_id = None
+        if only_new:
+            result = await db.execute(
+                select(Build.workflow_run_id)
+                .where(
+                    Build.project_id == project.id,
+                    Build.workflow_run_id.isnot(None),
+                )
+                .order_by(Build.started_at.desc())
+                .limit(1)
+            )
+            most_recent = result.scalar_one_or_none()
+            if most_recent:
+                most_recent_run_id = most_recent
+                print(f"  Most recent run_id in DB: {most_recent_run_id}, will stop when reached")
 
         # Fetch workflow runs
         runs = await self.fetch_workflow_runs(
@@ -174,6 +215,11 @@ class GitHubActionsScraper:
         for run in runs:
             run_id = run["id"]
             commit_sha = run["head_sha"]
+
+            # Early exit if we've reached existing data (only_new mode)
+            if only_new and most_recent_run_id and run_id == most_recent_run_id:
+                print(f"  Reached existing data (run_id: {run_id}), stopping")
+                break
 
             # Fetch jobs for this run
             jobs = await self.fetch_workflow_jobs(owner, repo, run_id)
@@ -195,9 +241,9 @@ class GitHubActionsScraper:
                         Build.job_id == job["id"],
                     )
                 )
-                if existing.scalar_one_or_none():
+                if existing.first():
                     continue  # Skip if already exists
-                platform = self.parse_platform(job.get("runner_name", ""))
+                platform = self.parse_platform_from_labels(job.get("labels", []))
                 duration = self.calculate_duration(
                     job.get("started_at"),
                     job.get("completed_at"),
@@ -245,10 +291,12 @@ class GitHubActionsScraper:
 
     async def scrape_all_configs(self, db: AsyncSession) -> dict[str, int]:
         """Scrape all enabled GitHub Actions configurations."""
-        # Get all enabled configs
+        # Get all enabled configs with eager loading
+        from sqlalchemy.orm import selectinload
         result = await db.execute(
             select(ProjectConfig, Project)
             .join(Project)
+            .options(selectinload(ProjectConfig.github_actions_config))
             .where(
                 ProjectConfig.is_enabled == True,
                 ProjectConfig.data_source == DataSource.GITHUB_ACTIONS,

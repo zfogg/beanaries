@@ -3,9 +3,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import builds, configs, leaderboard, projects
+from .api import builds, configs, leaderboard, projects, scheduler
 from .config import settings
 from .database import init_db
+from .scheduler import shutdown_scheduler, start_scheduler
 
 
 @asynccontextmanager
@@ -13,9 +14,10 @@ async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events."""
     # Startup
     await init_db()
+    await start_scheduler()
     yield
     # Shutdown
-    pass
+    await shutdown_scheduler()
 
 
 app = FastAPI(
@@ -39,6 +41,7 @@ app.include_router(projects.router)
 app.include_router(builds.router)
 app.include_router(configs.router)
 app.include_router(leaderboard.router)
+app.include_router(scheduler.router)
 
 
 @app.get("/health")

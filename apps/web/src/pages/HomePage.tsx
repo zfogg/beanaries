@@ -7,6 +7,7 @@ import LeaderboardCard from '@/components/LeaderboardCard'
 export default function HomePage() {
   const [platform, setPlatform] = useState<string>('')
   const [category, setCategory] = useState<string>('')
+  const [searchQuery, setSearchQuery] = useState<string>('')
 
   const { data: leaderboard, isLoading } = useQuery<LeaderboardEntry[]>({
     queryKey: ['leaderboard', platform, category],
@@ -16,6 +17,18 @@ export default function HomePage() {
         category: category || undefined,
         limit: 100,
       }),
+  })
+
+  // Filter leaderboard by search query
+  const filteredLeaderboard = leaderboard?.filter((entry) => {
+    if (!searchQuery) return true
+    const searchLower = searchQuery.toLowerCase()
+    return (
+      entry.project.full_name.toLowerCase().includes(searchLower) ||
+      entry.project.name.toLowerCase().includes(searchLower) ||
+      entry.project.subproject_path?.toLowerCase().includes(searchLower) ||
+      entry.project.description?.toLowerCase().includes(searchLower)
+    )
   })
 
   return (
@@ -30,6 +43,19 @@ export default function HomePage() {
       </div>
 
       <div className="flex flex-wrap gap-4 mb-8">
+        <div className="flex-1 min-w-[200px]">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Search Projects
+          </label>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search by name or description..."
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+          />
+        </div>
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Platform
@@ -74,13 +100,13 @@ export default function HomePage() {
         </div>
       ) : (
         <div className="space-y-4">
-          {leaderboard && leaderboard.length > 0 ? (
-            leaderboard.map((entry, index) => (
+          {filteredLeaderboard && filteredLeaderboard.length > 0 ? (
+            filteredLeaderboard.map((entry, index) => (
               <LeaderboardCard key={entry.project.id} entry={entry} rank={index + 1} />
             ))
           ) : (
             <div className="text-center py-12 text-gray-500">
-              No projects found. Try adjusting your filters.
+              No projects found. Try adjusting your filters or search query.
             </div>
           )}
         </div>
