@@ -1,0 +1,30 @@
+{
+  "exclude": [
+    "**/__pycache__",
+    "**/node_modules",
+    "**/.git",
+    "**/.venv",
+    "**/venv",
+    "**/env",
+    "**/.env",
+    "apps/backend/repos",
+    "apps/backend/alembic/versions/__pycache__",
+    "apps/web/node_modules"
+  ],
+  "venvPath": "apps/backend",
+  "venv": ".venv",
+  "executionEnvironments": [
+    {
+      "root": "apps/backend",
+      "pythonVersion": "3.11",
+      "pythonPlatform": "Windows",
+      "extraPaths": [
+        "apps/backend/src"
+      ]
+    }
+  ],
+  "reportMissingImports": true,
+  "reportMissingTypeStubs": false,
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "basic"
+}

@@ -16,11 +16,12 @@ from ..models import Build, DataSource, Platform, Project, ProjectConfig
 class LUCIScraper:
     """Scraper for LUCI Buildbucket builds (Chromium, Fuchsia, Dart, Flutter, WebRTC, V8, etc.)."""
 
-    def __init__(self, project_name: str):
+    def __init__(self, project_name: str = ""):
         """Initialize LUCI scraper.
 
         Args:
-            project_name: The LUCI project name (e.g., "chromium", "fuchsia", "dart", "flutter", "webrtc", "v8")
+            project_name: The LUCI project name (e.g., "chromium", "fuchsia", "dart", "flutter", "webrtc", "v8").
+                         Optional - will be read from config during scrape_config() if not provided.
         """
         self.project_name = project_name
         self.base_url = "https://cr-buildbucket.appspot.com"
@@ -233,6 +234,10 @@ class LUCIScraper:
         bucket = luci_config.bucket
         builder = luci_config.builder
         luci_project = luci_config.project_name
+        
+        # Update project_name for this scraper instance if not set
+        if not self.project_name:
+            self.project_name = luci_project
 
         # Get most recent build_id if only_new mode
         most_recent_build_id = None

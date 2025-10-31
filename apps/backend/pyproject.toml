@@ -16,6 +16,7 @@ dependencies = [
     "redis>=5.2.0",
     "firecrawl-py>=4.5.0",
     "apscheduler>=3.10.4",
+    "click>=8.3.0",
 ]
 
 [project.optional-dependencies]
