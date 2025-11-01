@@ -1,8 +1,16 @@
+import type {
+  Project,
+  ProjectWithStats,
+  ProjectTimeseries,
+  Build,
+  ProjectConfig,
+  LeaderboardEntry,
+} from '@/types'
+
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001'
 
 export async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`
-  console.log('fetchApi - URL:', url, 'API_BASE_URL:', API_BASE_URL)
   const response = await fetch(url, {
     ...options,
     headers: {
@@ -12,58 +20,141 @@ export async function fetchApi<T>(endpoint: string, options?: RequestInit): Prom
   })
 
   if (!response.ok) {
-    throw new Error(`API error: ${response.statusText}`)
+    const errorData = await response.json().catch(() => ({}))
+    const errorMessage = errorData.detail || `HTTP ${response.status}: ${response.statusText}`
+    throw new Error(errorMessage)
   }
 
   return response.json()
 }
 
+// Helper function to build query strings
+function buildQueryString(params: Record<string, string | number | boolean | undefined>): string {
+  const searchParams = new URLSearchParams()
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined) {
+      searchParams.set(key, value.toString())
+    }
+  })
+  const query = searchParams.toString()
+  return query ? `?${query}` : ''
+}
+
+// API Parameters Types
+export interface GetProjectsParams {
+  skip?: number
+  limit?: number
+  category?: string
+  is_active?: boolean
+}
+
+export interface GetTimeseriesParams {
+  platform?: string
+  branch?: string
+  days?: number
+}
+
+export interface GetBuildsParams {
+  project_id?: number
+  platform?: string
+  success?: boolean
+  skip?: number
+  limit?: number
+}
+
+export interface GetConfigsParams {
+  project_id?: number
+  is_enabled?: boolean
+}
+
+export interface GetLeaderboardParams {
+  platform?: string
+  category?: string
+  min_builds?: number
+  limit?: number
+}
+
+export interface CreateProjectData {
+  owner: string
+  name: string
+  subproject_path?: string | null
+  description?: string | null
+  language?: string | null
+  category: string
+}
+
+export interface UpdateProjectData {
+  description?: string | null
+  category?: string | null
+  is_active?: boolean
+}
+
+export interface CreateBuildData {
+  project_id: number
+  commit_sha: string
+  commit_message?: string | null
+  branch: string
+  success: boolean
+  duration_seconds?: number | null
+  platform: string
+  data_source: string
+  workflow_name?: string | null
+  workflow_run_id?: number | null
+  job_id?: number | null
+  build_url?: string | null
+  runner?: string | null
+  started_at?: string | null
+  finished_at?: string | null
+}
+
+export interface CreateConfigData {
+  project_id: number
+  data_source: string
+  platform: string
+  branch?: string
+  workflow_name?: string | null
+  workflow_file?: string | null
+  job_name?: string | null
+  build_command?: string | null
+  build_dir?: string | null
+  source_url?: string | null
+  extract_command?: string | null
+  check_interval_hours?: number
+}
+
+export interface UpdateConfigData {
+  data_source?: string
+  platform?: string
+  branch?: string
+  workflow_name?: string | null
+  workflow_file?: string | null
+  job_name?: string | null
+  build_command?: string | null
+  build_dir?: string | null
+  source_url?: string | null
+  extract_command?: string | null
+  is_enabled?: boolean
+  check_interval_hours?: number
+}
+
 export const api = {
   // Projects
-  getProjects: (params?: {
-    skip?: number
-    limit?: number
-    category?: string
-    is_active?: boolean
-  }) => {
-    const searchParams = new URLSearchParams()
-    if (params?.skip !== undefined) searchParams.set('skip', params.skip.toString())
-    if (params?.limit !== undefined) searchParams.set('limit', params.limit.toString())
-    if (params?.category) searchParams.set('category', params.category)
-    if (params?.is_active !== undefined)
-      searchParams.set('is_active', params.is_active.toString())
+  getProjects: (params?: GetProjectsParams) =>
+    fetchApi<Project[]>(`/projects${buildQueryString(params || {})}`),
 
-    const query = searchParams.toString()
-    return fetchApi<any[]>(`/projects${query ? `?${query}` : ''}`)
-  },
+  getProject: (id: number) => fetchApi<ProjectWithStats>(`/projects/${id}`),
 
-  getProject: (id: number) => fetchApi<any>(`/projects/${id}`),
+  getProjectTimeseries: (id: number, params?: GetTimeseriesParams) =>
+    fetchApi<ProjectTimeseries>(`/projects/${id}/timeseries${buildQueryString(params || {})}`),
 
-  getProjectTimeseries: (
-    id: number,
-    params?: {
-      platform?: string
-      branch?: string
-      days?: number
-    }
-  ) => {
-    const searchParams = new URLSearchParams()
-    if (params?.platform) searchParams.set('platform', params.platform)
-    if (params?.branch) searchParams.set('branch', params.branch)
-    if (params?.days !== undefined) searchParams.set('days', params.days.toString())
-
-    const query = searchParams.toString()
-    return fetchApi<any>(`/projects/${id}/timeseries${query ? `?${query}` : ''}`)
-  },
-
-  createProject: (data: any) =>
-    fetchApi<any>('/projects', {
+  createProject: (data: CreateProjectData) =>
+    fetchApi<Project>('/projects', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
 
-  updateProject: (id: number, data: any) =>
-    fetchApi<any>(`/projects/${id}`, {
+  updateProject: (id: number, data: UpdateProjectData) =>
+    fetchApi<Project>(`/projects/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
@@ -74,51 +165,27 @@ export const api = {
     }),
 
   // Builds
-  getBuilds: (params?: {
-    project_id?: number
-    platform?: string
-    success?: boolean
-    skip?: number
-    limit?: number
-  }) => {
-    const searchParams = new URLSearchParams()
-    if (params?.project_id !== undefined)
-      searchParams.set('project_id', params.project_id.toString())
-    if (params?.platform) searchParams.set('platform', params.platform)
-    if (params?.success !== undefined) searchParams.set('success', params.success.toString())
-    if (params?.skip !== undefined) searchParams.set('skip', params.skip.toString())
-    if (params?.limit !== undefined) searchParams.set('limit', params.limit.toString())
+  getBuilds: (params?: GetBuildsParams) =>
+    fetchApi<Build[]>(`/builds${buildQueryString(params || {})}`),
 
-    const query = searchParams.toString()
-    return fetchApi<any[]>(`/builds${query ? `?${query}` : ''}`)
-  },
-
-  createBuild: (data: any) =>
-    fetchApi<any>('/builds', {
+  createBuild: (data: CreateBuildData) =>
+    fetchApi<Build>('/builds', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
 
   // Configs
-  getConfigs: (params?: { project_id?: number; is_enabled?: boolean }) => {
-    const searchParams = new URLSearchParams()
-    if (params?.project_id !== undefined)
-      searchParams.set('project_id', params.project_id.toString())
-    if (params?.is_enabled !== undefined)
-      searchParams.set('is_enabled', params.is_enabled.toString())
+  getConfigs: (params?: GetConfigsParams) =>
+    fetchApi<ProjectConfig[]>(`/configs${buildQueryString(params || {})}`),
 
-    const query = searchParams.toString()
-    return fetchApi<any[]>(`/configs${query ? `?${query}` : ''}`)
-  },
-
-  createConfig: (data: any) =>
-    fetchApi<any>('/configs', {
+  createConfig: (data: CreateConfigData) =>
+    fetchApi<ProjectConfig>('/configs', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
 
-  updateConfig: (id: number, data: any) =>
-    fetchApi<any>(`/configs/${id}`, {
+  updateConfig: (id: number, data: UpdateConfigData) =>
+    fetchApi<ProjectConfig>(`/configs/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
@@ -129,20 +196,6 @@ export const api = {
     }),
 
   // Leaderboard
-  getLeaderboard: (params?: {
-    platform?: string
-    category?: string
-    min_builds?: number
-    limit?: number
-  }) => {
-    const searchParams = new URLSearchParams()
-    if (params?.platform) searchParams.set('platform', params.platform)
-    if (params?.category) searchParams.set('category', params.category)
-    if (params?.min_builds !== undefined)
-      searchParams.set('min_builds', params.min_builds.toString())
-    if (params?.limit !== undefined) searchParams.set('limit', params.limit.toString())
-
-    const query = searchParams.toString()
-    return fetchApi<any[]>(`/leaderboard${query ? `?${query}` : ''}`)
-  },
+  getLeaderboard: (params?: GetLeaderboardParams) =>
+    fetchApi<LeaderboardEntry[]>(`/leaderboard${buildQueryString(params || {})}`),
 }

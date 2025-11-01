@@ -19,6 +19,7 @@ Usage:
     # Scrape only specific data source
     uv run python -m src.cli.scrape --source github
 """
+
 import asyncio
 
 import click
@@ -27,29 +28,28 @@ from sqlalchemy.orm import selectinload
 
 from src.database import AsyncSessionLocal
 from src.models import DataSource, Project, ProjectConfig
+from src.scrapers.buildkite import BuildkiteScraper
+from src.scrapers.fedora_koji import FedoraKojiScraper
 from src.scrapers.github_actions import GitHubActionsScraper
 from src.scrapers.gitlab_ci import GitLabCIScraper
+from src.scrapers.luci import LUCIScraper
+from src.scrapers.opensuse_obs import OpenSuseObsScraper
 
 
 async def get_scraper_for_source(source: DataSource):
     """Get the appropriate scraper instance for a data source."""
     if source == DataSource.GITHUB_ACTIONS:
-        from src.scrapers.github_actions import GitHubActionsScraper
         return GitHubActionsScraper()
     elif source == DataSource.BUILDKITE:
-        from src.scrapers.buildkite import BuildkiteScraper
         return BuildkiteScraper()
     elif source == DataSource.LUCI:
-        from src.scrapers.luci import LUCIScraper
-        return LUCIScraper(project_name="")  # project_name will be read from config during scrape
+        # project_name will be read from config during scrape
+        return LUCIScraper(project_name="")
     elif source == DataSource.OBS:
-        from src.scrapers.opensuse_obs import OpenSuseObsScraper
         return OpenSuseObsScraper()
     elif source == DataSource.KOJI:
-        from src.scrapers.fedora_koji import FedoraKojiScraper
         return FedoraKojiScraper()
     elif source == DataSource.GITLAB_CI:
-        from src.scrapers.gitlab_ci import GitLabCIScraper
         return GitLabCIScraper()
     else:
         return None
@@ -78,9 +78,7 @@ async def get_scraper_for_source(source: DataSource):
 )
 @click.option(
     "--source",
-    type=click.Choice(
-        ["github", "buildkite", "luci", "obs", "koji"], case_sensitive=False
-    ),
+    type=click.Choice(["github", "buildkite", "luci", "obs", "koji"], case_sensitive=False),
     help="Only scrape configs for specific data source",
 )
 def main(
@@ -141,18 +139,14 @@ def main(
             configs = result.all()
 
             if not configs:
-                click.echo(
-                    click.style("No enabled configs found matching criteria", fg="yellow")
-                )
+                click.echo(click.style("No enabled configs found matching criteria", fg="yellow"))
                 if projects:
                     click.echo(f"Projects specified: {', '.join(projects)}")
                 if source_filter:
                     click.echo(f"Source filter: {source}")
                 return
 
-            click.echo(
-                f"Found {len(configs)} enabled config(s) to scrape"
-            )
+            click.echo(f"Found {len(configs)} enabled config(s) to scrape")
             if builds_limit:
                 click.echo(f"Max builds per config: {builds_limit}")
             else:
@@ -165,14 +159,16 @@ def main(
             failed = 0
 
             for config, project in configs:
-                # Access all attributes before try/except to avoid detached object issues after rollback
+                # Access all attributes before try/except to avoid detached object
+                # issues after rollback
                 project_name = project.full_name
                 data_source = config.data_source
-                platform = config.platform if config.platform else 'N/A'
+                platform = config.platform if config.platform else "N/A"
 
                 click.echo(f"{'=' * 60}")
                 click.echo(
-                    f"Project: {click.style(project_name, fg='cyan', bold=True)}"
+                    "Project: "
+                    + click.style(project_name, fg="cyan", bold=True)
                 )
                 click.echo(f"Source: {data_source}")
                 click.echo(f"Platform: {platform}")
@@ -221,16 +217,10 @@ def main(
                     successful += 1
 
                     if builds_added > 0:
-                        click.echo(
-                            click.style(
-                                f"[OK] Added {builds_added} build(s)", fg="green"
-                            )
-                        )
+                        click.echo(click.style(f"[OK] Added {builds_added} build(s)", fg="green"))
                     else:
                         click.echo(
-                            click.style(
-                                "[OK] No new builds (already up to date)", fg="green"
-                            )
+                            click.style("[OK] No new builds (already up to date)", fg="green")
                         )
                     click.echo()
 
@@ -239,9 +229,7 @@ def main(
 
                 except Exception as e:
                     failed += 1
-                    click.echo(
-                        click.style(f"[ERROR] {type(e).__name__}: {e}", fg="red")
-                    )
+                    click.echo(click.style(f"[ERROR] {type(e).__name__}: {e}", fg="red"))
                     click.echo()
                     await db.rollback()
 

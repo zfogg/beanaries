@@ -11,6 +11,15 @@ export default function ProjectPage() {
   const { id } = useParams<{ id: string }>()
   const [platform, setPlatform] = useState<string>('')
 
+  // Helper function to determine source button text based on URL
+  const getSourceButtonText = (url: string) => {
+    if (url.includes('github.com')) return 'View on GitHub'
+    if (url.includes('gitlab')) return 'View on GitLab'
+    if (url.includes('googlesource.com')) return 'View on Google Git'
+    if (url.includes('git.')) return 'View Repository'
+    return 'View Source Code'
+  }
+
   const { data: project, isLoading: projectLoading } = useQuery<ProjectWithStats>({
     queryKey: ['project', id],
     queryFn: () => api.getProject(Number(id)),
@@ -81,7 +90,7 @@ export default function ProjectPage() {
             rel="noopener noreferrer"
             className="btn btn-primary"
           >
-            View on GitHub
+            {getSourceButtonText(project.url)}
           </a>
         </div>
 

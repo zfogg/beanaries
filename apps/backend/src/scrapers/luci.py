@@ -2,7 +2,7 @@
 import asyncio
 import json
 import subprocess
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +10,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import Build, DataSource, Platform, Project, ProjectConfig
+from ..models import Build, DataSource, LUCIConfig, Platform, Project, ProjectConfig
 
 
 class LUCIScraper:
@@ -178,9 +178,9 @@ class LUCIScraper:
         try:
             # Use git cat-file --batch-check to verify commits exist
             # This is much faster than checking each commit individually
-            input_data = "\n".join(commit_shas) + "\n"
+            input_data: str = "\n".join(commit_shas) + "\n"
 
-            result = subprocess.run(
+            result: subprocess.CompletedProcess[str] = subprocess.run(
                 ["git", "cat-file", "--batch-check"],
                 cwd=repo_path,
                 input=input_data,
@@ -195,9 +195,9 @@ class LUCIScraper:
             for line in result.stdout.strip().split("\n"):
                 if line and " missing" not in line:
                     # Extract SHA from first column
-                    sha = line.split()[0]
+                    sha: str = line.split()[0]
                     if sha in commit_shas:
-                        valid_commits.add(sha)
+                      valid_commits.add(sha)
 
         except Exception as e:
             print(f"Warning: Error validating commits in repository: {e}")
@@ -227,14 +227,14 @@ class LUCIScraper:
             Number of builds added to database
         """
         # Access LUCI specific config through relationship
-        luci_config = config.luci_config
-        if not luci_config:
+        luci_config: LUCIConfig | None = config.luci_config
+        if luci_config is None:
             raise ValueError(f"No LUCI config found for config {config.id}")
 
-        bucket = luci_config.bucket
-        builder = luci_config.builder
-        luci_project = luci_config.project_name
-        
+        bucket: str = luci_config.bucket
+        builder: str = luci_config.builder
+        luci_project: str = luci_config.project_name
+
         # Update project_name for this scraper instance if not set
         if not self.project_name:
             self.project_name = luci_project
@@ -282,11 +282,11 @@ class LUCIScraper:
                 builds_by_commit[commit_sha] = build_data
 
         # Validate commits if repo_path is configured
-        valid_commits = set(builds_by_commit.keys())  # Default: all commits are valid
+        valid_commits: set[str] = set[str](builds_by_commit.keys())  # Default: all commits are valid
         if repo_path and repo_path.exists():
             print(f"Validating {len(builds_by_commit)} commits against repository...")
             valid_commits = self.validate_commits_in_repo(
-                repo_path, list(builds_by_commit.keys())
+                repo_path, list[str](builds_by_commit.keys())
             )
             invalid_count = len(builds_by_commit) - len(valid_commits)
             if invalid_count > 0:
@@ -296,7 +296,7 @@ class LUCIScraper:
         elif repo_path:
             print(f"⚠️  Warning: Repository path configured but not found: {repo_path}")
 
-        builds_to_add = []
+        builds_to_add: list[Build] = []
 
         for build_data in builds:
             build_id = build_data.get("id")
@@ -328,7 +328,7 @@ class LUCIScraper:
             # Get timestamps (API returns camelCase)
             start_time = build_data.get("startTime")
             end_time = build_data.get("endTime")
-            create_time = build_data.get("createTime")
+            #create_time = build_data.get("createTime")
 
             # Extract commit info
             commit_sha, commit_message = self.extract_commit_info(build_data)
@@ -390,7 +390,7 @@ class LUCIScraper:
             db.add_all(builds_to_add)
 
         # Update last checked time and commit
-        config.last_checked_at = datetime.now(timezone.utc)
+        config.last_checked_at = datetime.now(UTC)
         await db.commit()
 
         builds_created = len(builds_to_add)
@@ -404,9 +404,9 @@ class LUCIScraper:
             select(ProjectConfig, Project)
             .join(Project)
             .where(
-                ProjectConfig.is_enabled == True,
+                ProjectConfig.is_enabled,
                 ProjectConfig.data_source == DataSource.LUCI,
-                Project.is_active == True,
+                Project.is_active,
             )
         )
 
@@ -416,7 +416,7 @@ class LUCIScraper:
         for config, project in configs_projects:
             # Check if we should scrape this config
             if config.last_checked_at:
-                time_since_check = datetime.now(timezone.utc) - config.last_checked_at
+                time_since_check = datetime.now(UTC) - config.last_checked_at
                 if time_since_check < timedelta(hours=config.check_interval_hours):
                     continue
 

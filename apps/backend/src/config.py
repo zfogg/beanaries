@@ -35,8 +35,11 @@ class Settings(BaseSettings):
     # Firecrawl
     firecrawl_api_key: str | None = None
 
+    # API Authentication
+    api_key: str | None = None  # Required for write operations (POST, PATCH, DELETE)
+
     # App
-    debug: bool = True
+    debug: bool = False  # Default to False for production safety
 
 
 settings = Settings()

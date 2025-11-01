@@ -90,6 +90,8 @@ export interface TimeseriesPoint {
   duration_seconds: number | null
   success: boolean
   commit_sha: string
+  commit_message?: string | null
+  build_url?: string | null
 }
 
 export interface ProjectTimeseries {

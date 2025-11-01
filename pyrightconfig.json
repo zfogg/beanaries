@@ -13,13 +13,15 @@
   ],
   "venvPath": "apps/backend",
   "venv": ".venv",
+  "pythonPath": "apps/backend/.venv/Scripts/python.exe",
   "executionEnvironments": [
     {
       "root": "apps/backend",
       "pythonVersion": "3.11",
       "pythonPlatform": "Windows",
       "extraPaths": [
-        "apps/backend/src"
+        "apps/backend/src",
+        "apps/backend/.venv/Lib/site-packages"
       ]
     }
   ],

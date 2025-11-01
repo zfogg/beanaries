@@ -1,9 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import Integer, case, cast, func, select
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from sqlalchemy import Integer, case, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from ..auth import verify_api_key
+from ..cache import CacheService, get_cache
 from ..database import get_db
+from ..logging_config import get_logger
 from ..models import Build, Project, ProjectConfig
 from ..schemas import (
     BuildResponse,
@@ -18,10 +23,14 @@ from ..schemas import (
 )
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+logger = get_logger(__name__)
+limiter = Limiter(key_func=get_remote_address)
 
 
 @router.get("", response_model=list[ProjectResponse])
+@limiter.limit("100/minute")
 async def list_projects(
+    request: Request,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     category: str | None = None,
@@ -46,6 +55,7 @@ async def list_projects(
 async def create_project(
     project: ProjectCreate,
     db: AsyncSession = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
 ) -> Project:
     """Create a new project (simple version)."""
     full_name = f"{project.owner}/{project.name}"
@@ -96,6 +106,7 @@ async def create_project(
 async def create_project_with_config(
     project: ProjectWithConfigCreate,
     db: AsyncSession = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
 ) -> Project:
     """Create a new project with full build configuration.
 
@@ -199,11 +210,23 @@ async def create_project_with_config(
 
 
 @router.get("/{project_id}", response_model=ProjectWithStats)
+@limiter.limit("100/minute")
 async def get_project(
+    request: Request,
     project_id: int,
     db: AsyncSession = Depends(get_db),
+    cache: CacheService = Depends(get_cache),
 ) -> dict:
-    """Get a project with statistics."""
+    """Get a project with statistics.
+
+    Cached with automatic invalidation when project or build data changes.
+    """
+    # Try to get from cache
+    cache_key = cache.project_key(project_id)
+    cached_data = await cache.get(cache_key)
+    if cached_data is not None:
+        logger.info("project_cache_hit", project_id=project_id)
+        return cached_data
     # Get project
     result = await db.execute(
         select(Project)
@@ -215,7 +238,7 @@ async def get_project(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Get statistics (exclude outliers >24 hours)
+    # Get statistics (exclude outliers >24 hours and negative durations)
     stats_query = select(
         func.count(Build.id).label("total_builds"),
         func.sum(cast(case((Build.success == True, 1), else_=0), Integer())).label("successful_builds"),
@@ -225,16 +248,22 @@ async def get_project(
     ).where(
         Build.project_id == project_id,
         Build.duration_seconds.isnot(None),
+        Build.duration_seconds >= 0,  # Exclude negative durations
         Build.duration_seconds <= 86400,  # Exclude outliers >24 hours
     )
 
     stats_result = await db.execute(stats_query)
     stats_row = stats_result.one()
 
-    # Get latest builds (only completed builds with finished_at)
+    # Get latest builds (only completed builds with finished_at and valid durations)
     latest_builds_query = (
         select(Build)
-        .where(Build.project_id == project_id, Build.finished_at.isnot(None))
+        .where(
+            Build.project_id == project_id,
+            Build.finished_at.isnot(None),
+            # Only include builds with valid durations (null or >= 0)
+            or_(Build.duration_seconds.is_(None), Build.duration_seconds >= 0)
+        )
         .order_by(Build.finished_at.desc())
         .limit(10)
     )
@@ -254,7 +283,7 @@ async def get_project(
         latest_build=latest_build,
     )
 
-    return {
+    result = {
         "id": project.id,
         "owner": project.owner,
         "name": project.name,
@@ -272,14 +301,25 @@ async def get_project(
         "latest_builds": latest_builds,
     }
 
+    # Cache the result for 10 minutes
+    await cache.set(cache_key, result, ttl=600)
+    logger.info("project_cached", project_id=project_id)
+
+    return result
+
 
 @router.patch("/{project_id}", response_model=ProjectResponse)
 async def update_project(
     project_id: int,
     update: ProjectUpdate,
     db: AsyncSession = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
+    cache: CacheService = Depends(get_cache),
 ) -> Project:
-    """Update a project."""
+    """Update a project.
+
+    Automatically invalidates project cache.
+    """
     result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
 
@@ -293,6 +333,10 @@ async def update_project(
     await db.flush()
     await db.refresh(project)
 
+    # Invalidate project cache
+    await cache.invalidate_project(project_id)
+    logger.info("project_updated_cache_invalidated", project_id=project_id)
+
     return project
 
 
@@ -300,6 +344,7 @@ async def update_project(
 async def delete_project(
     project_id: int,
     db: AsyncSession = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
 ) -> None:
     """Delete a project."""
     result = await db.execute(select(Project).where(Project.id == project_id))
@@ -312,14 +357,26 @@ async def delete_project(
 
 
 @router.get("/{project_id}/timeseries", response_model=ProjectTimeseries)
+@limiter.limit("100/minute")
 async def get_project_timeseries(
+    request: Request,
     project_id: int,
     platform: str | None = None,
     branch: str | None = None,
     days: int = Query(30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
+    cache: CacheService = Depends(get_cache),
 ) -> dict:
-    """Get timeseries data for a project."""
+    """Get timeseries data for a project.
+
+    Cached with automatic invalidation when build data changes.
+    """
+    # Try to get from cache
+    cache_key = cache.project_timeseries_key(project_id, platform=platform, branch=branch)
+    cached_data = await cache.get(cache_key)
+    if cached_data is not None:
+        logger.info("timeseries_cache_hit", project_id=project_id, platform=platform, branch=branch)
+        return cached_data
     # Verify project exists
     project_result = await db.execute(select(Project).where(Project.id == project_id))
     project = project_result.scalar_one_or_none()
@@ -355,13 +412,21 @@ async def get_project_timeseries(
             duration_seconds=build.duration_seconds,
             success=build.success,
             commit_sha=build.commit_sha,
+            commit_message=build.commit_message,
+            build_url=build.build_url,
         )
         for build in builds
     ]
 
-    return {
+    result = {
         "project_id": project_id,
         "project_name": project.full_name,
         "platform": platform,
         "points": points,
     }
+
+    # Cache the result for 15 minutes
+    await cache.set(cache_key, result, ttl=900)
+    logger.info("timeseries_cached", project_id=project_id, platform=platform, branch=branch)
+
+    return result

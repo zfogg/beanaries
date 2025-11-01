@@ -148,6 +148,8 @@ class TimeseriesPoint(BaseModel):
     duration_seconds: int | None
     success: bool
     commit_sha: str
+    commit_message: str | None
+    build_url: str | None
 
 
 class ProjectTimeseries(BaseModel):
@@ -159,6 +161,8 @@ class ProjectTimeseries(BaseModel):
 
 # Leaderboard schemas
 class LeaderboardEntry(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     project: ProjectResponse
     avg_build_time_seconds: float | None
     latest_build_time_seconds: int | None
